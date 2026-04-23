@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}Expense Tracker — Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- ── Stat cards ────────────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="card-body">
+        <div class="stat-label">Total (visible)</div>
+        <div class="stat-value" id="stat-total">₹0.00</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="card-body">
+        <div class="stat-label">Entries (visible)</div>
+        <div class="stat-value" id="stat-count">0</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="card-body">
+        <div class="stat-label">Top Category</div>
+        <div class="stat-value" id="stat-top-cat">—</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="card-body">
+        <div class="stat-label">Latest Entry</div>
+        <div class="stat-value stat-value--sm" id="stat-latest" style="font-size: 1.3rem;">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Main row ───────────────────────────────────────────────────────────── -->
+<div class="row g-4">
+
+  <!-- ── Left column ──────────────────────────────────────────────────────── -->
+  <div class="col-lg-4">
+
+    <!-- Add Expense Form -->
+    <div class="card p-4">
+      <h5 class="section-heading mb-3">
+        <i class="bi bi-plus-circle-fill me-2"></i>Add Expense
+      </h5>
+
+      <form id="expense-form" novalidate>
+        <input type="hidden" id="idempotency-key"/>
+
+        <!-- Amount -->
+        <div class="mb-3">
+          <label class="form-label fw-medium" for="amount">
+            Amount (₹) <span class="text-danger">*</span>
+          </label>
+          <div class="input-group">
+            <span class="input-group-text">₹</span>
+            <input
+              type="number" id="amount" name="amount"
+              class="form-control" placeholder="0.00"
+              min="0.01" step="0.01" required
+            />
+          </div>
+          <div class="invalid-feedback">Enter a valid positive amount.</div>
+        </div>
+
+        <!-- Category -->
+        <div class="mb-3">
+          <label class="form-label fw-medium" for="category">
+            Category <span class="text-danger">*</span>
+          </label>
+          <select id="category" name="category" class="form-select" required>
+            <option value="">— Select —</option>
+            {% for cat in categories %}
+            <option value="{{ cat }}">{{ cat }}</option>
+            {% endfor %}
+          </select>
+          <div class="invalid-feedback">Please select a category.</div>
+        </div>
+
+        <!-- Description -->
+        <div class="mb-3">
+          <label class="form-label fw-medium" for="description">
+            Description
+          </label>
+          <input
+            type="text" id="description" name="description"
+            class="form-control" placeholder="e.g. Lunch at café"
+            maxlength="500"
+          />
+        </div>
+
+        <!-- Date -->
+        <div class="mb-4">
+          <label class="form-label fw-medium" for="date">
+            Date <span class="text-danger">*</span>
+          </label>
+          <input type="date" id="date" name="date"
+                 class="form-control" value="2026-04-11" required/>
+          <div class="invalid-feedback">A valid date is required.</div>
+        </div>
+
+        <!-- Submit -->
+        <button type="submit" id="submit-btn"
+                class="btn btn-primary w-100 fw-semibold">
+          <span id="btn-label">
+            <i class="bi bi-send me-1"></i>Add Expense
+          </span>
+          <span id="btn-spinner" class="d-none">
+            <span class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>Saving…
+          </span>
+        </button>
+
+        <!-- Inline form alert -->
+        <div id="form-alert" class="alert mt-3 d-none" role="alert"></div>
+      </form>
+    </div>
+
+    <!-- Category Summary -->
+    <div class="card p-4 mt-4">
+      <h6 class="section-heading mb-3">
+        <i class="bi bi-pie-chart me-2"></i>Spend by Category
+      </h6>
+      <div id="summary-list">
+        <p class="text-muted small mb-0">No data yet.</p>
+      </div>
+    </div>
+
+  </div><!-- /left col -->
+
+  <!-- ── Right column ─────────────────────────────────────────────────────── -->
+  <div class="col-lg-8">
+    <div class="card p-4">
+
+      <!-- Filters toolbar -->
+      <div class="row g-2 mb-3 align-items-end">
+        <div class="col-sm-5">
+          <label class="form-label small fw-medium mb-1">
+            Filter by Category
+          </label>
+          <select id="filter-category" class="form-select form-select-sm">
+            <option value="">All Categories</option>
+            {% for cat in categories %}
+            <option value="{{ cat }}">{{ cat }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-sm-4">
+          <label class="form-label small fw-medium mb-1">Sort</label>
+          <select id="sort-order" class="form-select form-select-sm">
+            <option value="date_desc">Newest First</option>
+            <option value="date_asc">Oldest First</option>
+          </select>
+        </div>
+        <div class="col-sm-3 text-end">
+          <button id="refresh-btn"
+                  class="btn btn-outline-secondary btn-sm w-100">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Total banner -->
+      <div class="total-banner mb-3">
+        <span class="fw-medium">Total</span>
+        <span class="total-value" id="total-display">₹0.00</span>
+      </div>
+
+      <!-- Table loading -->
+      <div id="table-loading" class="d-none text-center py-4">
+        <div class="spinner-border text-primary" role="status">
+          <span class="visually-hidden">Loading…</span>
+        </div>
+      </div>
+
+      <!-- Expenses table -->
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0"
+               id="expense-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th class="text-end">Amount</th>
+              <th class="text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody id="expense-tbody">
+            <tr id="empty-row">
+              <td colspan="6" class="text-center text-muted py-5">
+                <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                No expenses yet. Add one above!
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </div><!-- /right col -->
+
+</div><!-- /row -->
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}

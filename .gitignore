@@ -1,0 +1,8 @@
+# Database
+db/
+
+# Environment
+myenv/
+
+#pycache
+__pycache__/
