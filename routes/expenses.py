@@ -2,7 +2,7 @@ import sqlite3
 import uuid
 from decimal import Decimal
 
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, jsonify, request
 
 from core.database import get_connection
 from core.models import ExpenseInput, row_to_dict, VALID_CATEGORIES
@@ -16,6 +16,11 @@ def _err(msg: str, status: int = 400):
     return jsonify({"error": msg}), status
 
 
+def _commit(conn):
+    """Commit without closing — important for shared test connections."""
+    conn.commit()
+
+
 # ── POST /expenses ────────────────────────────────────────────────────────────
 
 @expenses_bp.route("", methods=["POST"])
@@ -24,9 +29,9 @@ def create_expense():
     Create a new expense.
 
     Body (JSON):
-        amount           – positive decimal string/number (rupees)
+        amount           – positive decimal (rupees)
         category         – one of VALID_CATEGORIES
-        description      – optional free text, max 500 chars
+        description      – optional, max 500 chars
         date             – YYYY-MM-DD
         idempotency_key  – optional UUID; de-duplicates retried requests
     """
@@ -34,16 +39,16 @@ def create_expense():
     if not data:
         return _err("Request body must be valid JSON.")
 
-    # ── Validate via model ────────────────────────────────────────────────────
     try:
         expense = ExpenseInput.from_dict(data)
     except ValueError as exc:
         return _err(str(exc))
 
     idem_key = expense.idempotency_key or str(uuid.uuid4())
+    conn = get_connection()
 
-    with get_connection() as conn:
-        # Return existing record for duplicate idempotency keys
+    try:
+        # ── Idempotency check ─────────────────────────────────────────────────
         existing = conn.execute(
             "SELECT * FROM expenses WHERE idempotency_key = ?",
             (idem_key,)
@@ -51,6 +56,7 @@ def create_expense():
         if existing:
             return jsonify(row_to_dict(existing)), 200
 
+        # ── Insert ────────────────────────────────────────────────────────────
         try:
             cursor = conn.execute(
                 """INSERT INTO expenses
@@ -64,7 +70,8 @@ def create_expense():
                     expense.date,
                 ),
             )
-            conn.commit()
+            _commit(conn)
+
             row = conn.execute(
                 "SELECT * FROM expenses WHERE id = ?",
                 (cursor.lastrowid,)
@@ -72,12 +79,18 @@ def create_expense():
             return jsonify(row_to_dict(row)), 201
 
         except sqlite3.IntegrityError:
-            # Race condition: parallel request committed same key first
+            # Parallel request committed the same idempotency key first
             existing = conn.execute(
                 "SELECT * FROM expenses WHERE idempotency_key = ?",
                 (idem_key,)
             ).fetchone()
             return jsonify(row_to_dict(existing)), 200
+
+    finally:
+        # Only close if this is a real per-request connection (not test shared)
+        from core.database import _forced_connection
+        if _forced_connection is None:
+            conn.close()
 
 
 # ── GET /expenses ─────────────────────────────────────────────────────────────
@@ -85,7 +98,7 @@ def create_expense():
 @expenses_bp.route("", methods=["GET"])
 def list_expenses():
     """
-    List expenses with optional filtering and sorting.
+    List expenses.
 
     Query params:
         category  – filter by exact category name
@@ -95,16 +108,16 @@ def list_expenses():
     sort     = request.args.get("sort", "date_desc")
     order    = "ASC" if sort == "date_asc" else "DESC"
 
-    # Validate optional category query param
     if category and category not in VALID_CATEGORIES:
         return _err(f"Unknown category: {category!r}")
 
-    with get_connection() as conn:
+    conn = get_connection()
+    try:
         if category:
             rows = conn.execute(
                 f"""SELECT * FROM expenses
-                    WHERE category = ?
-                    ORDER BY date {order}, id {order}""",
+                    WHERE  category = ?
+                    ORDER  BY date {order}, id {order}""",
                 (category,),
             ).fetchall()
         else:
@@ -112,6 +125,10 @@ def list_expenses():
                 f"""SELECT * FROM expenses
                     ORDER BY date {order}, id {order}"""
             ).fetchall()
+    finally:
+        from core.database import _forced_connection
+        if _forced_connection is None:
+            conn.close()
 
     expenses     = [row_to_dict(r) for r in rows]
     total_paise  = sum(int(Decimal(e["amount"]) * 100) for e in expenses)
@@ -129,12 +146,17 @@ def list_expenses():
 
 @expenses_bp.route("/<int:expense_id>", methods=["DELETE"])
 def delete_expense(expense_id: int):
-    with get_connection() as conn:
+    conn = get_connection()
+    try:
         result = conn.execute(
             "DELETE FROM expenses WHERE id = ?",
             (expense_id,)
         )
-        conn.commit()
+        _commit(conn)
+    finally:
+        from core.database import _forced_connection
+        if _forced_connection is None:
+            conn.close()
 
     if result.rowcount == 0:
         return _err("Expense not found.", 404)
@@ -145,8 +167,9 @@ def delete_expense(expense_id: int):
 
 @expenses_bp.route("/summary", methods=["GET"])
 def summary():
-    """Return total spend and count grouped by category, ordered by total."""
-    with get_connection() as conn:
+    """Return spend + count grouped by category."""
+    conn = get_connection()
+    try:
         rows = conn.execute(
             """SELECT   category,
                         SUM(amount) AS total_paise,
@@ -155,6 +178,10 @@ def summary():
                GROUP BY category
                ORDER BY total_paise DESC"""
         ).fetchall()
+    finally:
+        from core.database import _forced_connection
+        if _forced_connection is None:
+            conn.close()
 
     return jsonify([
         {
